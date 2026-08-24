@@ -17,8 +17,13 @@ from app.discovery.providers.searxng_search import FakeSearxngProvider
 from app.llm.deepseek_client import FakeDeepSeekClient
 from app.llm.relevance import RelevanceChecker
 from app.logging import SECRET_FIELD_NAMES, describe_secret, setup_logging
-from app.portfolio.service import SeedPortfolioSummary
-from app.scheduler import create_scheduler, register_discovery_job
+from app.portfolio.github_client import FakeGithubClient, GithubApiClient, GithubClient
+from app.portfolio.service import PortfolioService
+from app.scheduler import (
+    create_scheduler,
+    register_discovery_job,
+    register_portfolio_sync_job,
+)
 from app.services.chat_service import ChatService
 from app.services.lead_service import LeadService
 from app.telethon_client.client import TelethonChatResolver, create_telethon_client
@@ -106,16 +111,20 @@ async def run() -> None:
     chat_service = ChatService(session_factory, resolver, settings.discovery_interval_minutes)
     await chat_service.sync_from_sources_file(settings.sources_file_path)
 
+    portfolio = PortfolioService(session_factory, create_github_client(settings))
+    await portfolio.sync()
+
     pipeline = DiscoveryPipeline([FakeSearxngProvider()])
     scheduler = create_scheduler()
     register_discovery_job(scheduler, discovery_job(pipeline), settings.discovery_interval_minutes)
+    register_portfolio_sync_job(scheduler, portfolio_sync_job(portfolio))
     scheduler.start()
 
     bot = Bot(token=settings.bot_token)
     lead_service = LeadService(
         session_factory,
         RelevanceChecker(FakeDeepSeekClient()),
-        SeedPortfolioSummary(),
+        portfolio,
         TelegramOwnerNotifier(bot, settings.owner_tg_id),
     )
     dispatcher = build_dispatcher(settings, chat_service, lead_service)
@@ -133,6 +142,20 @@ def discovery_job(pipeline: DiscoveryPipeline) -> Callable[[], Awaitable[None]]:
         await pipeline.run_once()
 
     return job
+
+
+def portfolio_sync_job(portfolio: PortfolioService) -> Callable[[], Awaitable[None]]:
+    async def job() -> None:
+        await portfolio.sync()
+
+    return job
+
+
+def create_github_client(settings: Settings) -> GithubClient:
+    if settings.github_username and settings.github_token:
+        return GithubApiClient(settings.github_username, settings.github_token)
+    logger.warning("github credentials are missing, portfolio falls back to seed repositories")
+    return FakeGithubClient()
 
 
 def main() -> None:
