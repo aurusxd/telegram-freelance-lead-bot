@@ -172,16 +172,19 @@ class DiscoveryProvider(str, enum.Enum):
     telethon_search = "telethon_search"
     searxng = "searxng"
 
+
 class DiscoveryStatus(str, enum.Enum):
-    pending = "pending"      # кандидат найден, метаданные/сообщения ещё не загружены
-    fetched = "fetched"      # сообщения загружены, ждёт оценки LLM
+    pending = "pending"  # кандидат найден, метаданные/сообщения ещё не загружены
+    fetched = "fetched"  # сообщения загружены, ждёт оценки LLM
     evaluated = "evaluated"  # оценён, но статус ниже точнее — используется approved/rejected
-    approved = "approved"    # LLM признал релевантным
-    rejected = "rejected"    # LLM признал нерелевантным
+    approved = "approved"  # LLM признал релевантным
+    rejected = "rejected"  # LLM признал нерелевантным
+
 
 class MonitoredChatOrigin(str, enum.Enum):
-    sources_file = "sources_file"   # синк из sources.json (раздел 8.1)
-    command = "command"             # добавлен вручную через /add_chat
+    sources_file = "sources_file"  # синк из sources.json (раздел 8.1)
+    command = "command"  # добавлен вручную через /add_chat
+
 
 class MonitoredChat(Base):
     __tablename__ = "monitored_chats"
@@ -193,6 +196,7 @@ class MonitoredChat(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     origin: Mapped[MonitoredChatOrigin]
     added_at: Mapped[datetime] = mapped_column(default=utcnow)
+
 
 class Lead(Base):
     __tablename__ = "leads"
@@ -208,6 +212,7 @@ class Lead(Base):
     notified_at: Mapped[datetime | None]
     __table_args__ = (UniqueConstraint("monitored_chat_id", "tg_message_id"),)
 
+
 class DiscoveredChat(Base):
     __tablename__ = "discovered_chats"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -221,6 +226,7 @@ class DiscoveredChat(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     evaluated_at: Mapped[datetime | None]
 
+
 class SearchQuery(Base):
     __tablename__ = "search_queries"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -228,12 +234,13 @@ class SearchQuery(Base):
     generated_at: Mapped[datetime] = mapped_column(default=utcnow)
     last_run_at: Mapped[datetime | None]
 
+
 class PortfolioItem(Base):
     __tablename__ = "portfolio_items"
     id: Mapped[int] = mapped_column(primary_key=True)
     repo_name: Mapped[str] = mapped_column(unique=True)
     description: Mapped[str | None]
-    topics: Mapped[str | None]        # JSON-строка списка топиков
+    topics: Mapped[str | None]  # JSON-строка списка топиков
     language: Mapped[str | None]
     html_url: Mapped[str]
     synced_at: Mapped[datetime] = mapped_column(default=utcnow)
@@ -289,11 +296,12 @@ class SourceProvider(Protocol):
 ```python
 class RelevanceVerdict(BaseModel):
     is_relevant: bool
-    reason: str          # <= 200 символов, по-русски, для показа владельцу
-    confidence: float     # 0..1
+    reason: str  # <= 200 символов, по-русски, для показа владельцу
+    confidence: float  # 0..1
+
 
 class GeneratedQueries(BaseModel):
-    queries: list[str]    # 3..10 элементов, без дублей
+    queries: list[str]  # 3..10 элементов, без дублей
 ```
 
 Единый контракт `RelevanceVerdict` используется в двух местах с разными промптами, но одной моделью ответа:
