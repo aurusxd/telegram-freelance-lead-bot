@@ -13,7 +13,9 @@ from app.config import Settings, get_settings
 from app.db.base import create_engine, create_session_factory
 from app.db.models import Lead
 from app.discovery.pipeline import DiscoveryPipeline
-from app.discovery.providers.searxng_search import FakeSearxngProvider
+from app.discovery.providers.searxng_search import SearxngProvider
+from app.discovery.providers.telegram_search import TelethonGlobalSearchProvider
+from app.discovery.query_generator import QueryGenerator
 from app.llm.deepseek_client import DeepSeekClient, FakeDeepSeekClient, LlmClient
 from app.llm.relevance import RelevanceChecker
 from app.logging import SECRET_FIELD_NAMES, describe_secret, setup_logging
@@ -27,6 +29,8 @@ from app.scheduler import (
 from app.services.chat_service import ChatService
 from app.services.lead_service import LeadService
 from app.telethon_client.client import TelethonChatResolver, create_telethon_client
+from app.telethon_client.history import TelethonChatHistory
+from app.telethon_client.search import TelethonGlobalSearch
 
 
 def format_lead_notification(lead: Lead, chat_title: str) -> str:
@@ -114,7 +118,22 @@ async def run() -> None:
     portfolio = PortfolioService(session_factory, create_github_client(settings))
     await portfolio.sync()
 
-    pipeline = DiscoveryPipeline([FakeSearxngProvider()])
+    llm_client = create_llm_client(settings)
+    relevance_checker = RelevanceChecker(llm_client)
+    pipeline = DiscoveryPipeline(
+        session_factory,
+        [
+            TelethonGlobalSearchProvider(TelethonGlobalSearch(telethon_client)),
+            SearxngProvider(settings.searxng_base_url),
+        ],
+        QueryGenerator(llm_client),
+        resolver,
+        TelethonChatHistory(telethon_client),
+        relevance_checker,
+        portfolio,
+        queries_per_run=settings.discovery_queries_per_run,
+        messages_per_chat=settings.discovery_messages_per_chat,
+    )
     scheduler = create_scheduler()
     register_discovery_job(scheduler, discovery_job(pipeline), settings.discovery_interval_minutes)
     register_portfolio_sync_job(scheduler, portfolio_sync_job(portfolio))
@@ -123,7 +142,7 @@ async def run() -> None:
     bot = Bot(token=settings.bot_token)
     lead_service = LeadService(
         session_factory,
-        RelevanceChecker(create_llm_client(settings)),
+        relevance_checker,
         portfolio,
         TelegramOwnerNotifier(bot, settings.owner_tg_id),
     )

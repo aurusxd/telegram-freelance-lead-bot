@@ -7,6 +7,7 @@ from hypothesis import strategies as st
 
 from app.db.models import DiscoveryProvider
 from app.discovery.providers.searxng_search import (
+    PRIVATE_PATH_PREFIXES,
     SearxngProvider,
     build_search_query,
     extract_results,
@@ -75,7 +76,7 @@ def test_parser_is_deterministic(raw: str) -> None:
         alphabet=st.sampled_from("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"),
         min_size=5,
         max_size=31,
-    ).filter(lambda value: value[0].isalpha())
+    ).filter(lambda value: value[0].isalpha() and value.lower() not in PRIVATE_PATH_PREFIXES)
 )
 def test_username_parsing_is_case_insensitive(username: str) -> None:
     assert parse_tme_username(f"https://t.me/{username}") == username.lower()
@@ -155,6 +156,11 @@ async def test_timeout_degrades_to_empty_list() -> None:
         raise httpx.ConnectTimeout("timeout", request=request)
 
     assert await build_provider(handler).search("заказ бота") == []
+
+
+@pytest.mark.parametrize("reserved", sorted(PRIVATE_PATH_PREFIXES - {"+"}))
+def test_reserved_service_paths_are_never_treated_as_chats(reserved: str) -> None:
+    assert parse_tme_username(f"https://t.me/{reserved}/anything") is None
 
 
 @pytest.mark.parametrize("payload", [{"results": "мусор"}, {"other": []}, ["список"], 42])

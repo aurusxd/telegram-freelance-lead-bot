@@ -12,7 +12,9 @@ REQUEST_TIMEOUT_SECONDS = 20.0
 SEARCH_PATH = "/search"
 MAX_RESULTS_PER_QUERY = 30
 TELEGRAM_HOSTS = frozenset({"t.me", "www.t.me", "telegram.me", "www.telegram.me"})
-PRIVATE_PATH_PREFIXES = ("joinchat", "+", "c", "s", "share", "addstickers", "proxy", "socks")
+PRIVATE_PATH_PREFIXES = frozenset(
+    {"joinchat", "+", "c", "s", "share", "addstickers", "proxy", "socks"}
+)
 USERNAME_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{4,31}$")
 
 

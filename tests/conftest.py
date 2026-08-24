@@ -8,7 +8,8 @@ from aiogram.types import Chat, Message, User
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.base import Base, create_engine, create_session_factory
-from app.db.models import Lead
+from app.db.models import DiscoveryProvider, Lead
+from app.discovery.candidate import DiscoveredSourceCandidate
 from app.telethon_client.client import ResolvedChat
 from tests.unit.fixtures.relevance_messages import RelevanceCase
 
@@ -128,4 +129,60 @@ def make_group_message(
         chat=Chat(id=chat_id, type=chat_type, title="Мониторимый чат"),
         from_user=User(id=user_id, is_bot=False, first_name=first_name, username=username),
         text=text or None,
+    )
+
+
+class FakeSourceProvider:
+    def __init__(
+        self,
+        candidates: Sequence[DiscoveredSourceCandidate],
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self._candidates = candidates
+        self._error = error
+        self.queries: list[str] = []
+
+    async def search(self, query: str) -> list[DiscoveredSourceCandidate]:
+        self.queries.append(query)
+        if self._error is not None:
+            raise self._error
+        return list(self._candidates)
+
+
+class FakeHistoryReader:
+    def __init__(self, messages: dict[int, list[str]] | None = None) -> None:
+        self.messages = messages or {}
+        self.calls: list[tuple[int, int]] = []
+
+    async def read_last_messages(self, chat: ResolvedChat, limit: int) -> list[str]:
+        self.calls.append((chat.tg_chat_id, limit))
+        return list(self.messages.get(chat.tg_chat_id, []))
+
+
+class FakeQueryLlm:
+    def __init__(self, queries: list[str]) -> None:
+        self._queries = queries
+        self.calls = 0
+
+    async def complete_json(self, *, system_prompt: str, user_prompt: str) -> str:
+        del system_prompt, user_prompt
+        self.calls += 1
+        return json.dumps({"queries": self._queries}, ensure_ascii=False)
+
+
+def make_candidate(
+    username: str,
+    *,
+    provider: DiscoveryProvider = DiscoveryProvider.searxng,
+    tg_chat_id: int | None = None,
+    title: str | None = None,
+) -> DiscoveredSourceCandidate:
+    return DiscoveredSourceCandidate(
+        provider=provider,
+        username=username,
+        tg_chat_id=tg_chat_id,
+        title=title,
+        link=f"https://t.me/{username}",
+        raw_snippet=None,
     )

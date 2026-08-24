@@ -70,6 +70,16 @@ class MonitoredChatRepository:
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
+    async def existing_keys(self) -> set[str]:
+        statement = select(MonitoredChat.username, MonitoredChat.tg_chat_id)
+        result = await self._session.execute(statement)
+        keys: set[str] = set()
+        for username, tg_chat_id in result.all():
+            if username:
+                keys.add(username.lower())
+            keys.add(str(tg_chat_id))
+        return keys
+
     async def list_active(self) -> Sequence[MonitoredChat]:
         statement = (
             select(MonitoredChat)
