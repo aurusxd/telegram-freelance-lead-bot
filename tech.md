@@ -1,7 +1,8 @@
 # tech.md — ядро проекта
 
-version: v6 (2026-08-24)
+version: v7 (2026-08-25)
 changelog:
+- v7 — устойчивость (раздел 18): бэкофф на Telethon-вызовах, рейт-лимит DeepSeek и переменная DEEPSEEK_MIN_INTERVAL_SECONDS, расширенный /status, результаты операций управления чатами.
 - v6 — интерфейсы discovery-конвейера и мониторинга (раздел 17): GlobalChatSearch, ChatHistoryReader, PortfolioSummarySource, OwnerNotifier, семантика LlmRequestError и ретрая, DiscoveryRunResult.
 - v5 — контракты резолва чата, LLM-клиента и GitHub-клиента (раздел 15), планировщик на APScheduler с интервалом discovery 10 минут (раздел 16).
 - v4 — дефолтный источник мониторимых чатов `sources.json` (раздел 8.1), поле `origin` в `MonitoredChat` (раздел 5), эталонная вертикаль скелета переопределена (раздел 14).
@@ -611,3 +612,87 @@ class DiscoveryRunResult(BaseModel):
 ```
 
 Уточнение к разделу 6.3: кандидат с пустой историей сообщений сохраняется со статусом `rejected` и причиной «история чата пуста, оценка не проводилась», в LLM не отправляется. Нерезолвящийся кандидат не сохраняется и считается в `unresolved`.
+
+---
+
+## 18. Устойчивость и управление чатами (append v7)
+
+Дополняет разделы 4, 8, 10 и 14 (слайсы 7 и 8).
+
+### 18.1. Новая переменная окружения
+
+```
+DEEPSEEK_MIN_INTERVAL_SECONDS=1.0
+```
+
+Минимальная пауза между запросами к DeepSeek. `0` отключает рейт-лимит. Читается через `app/config.py`, как и остальные переменные раздела 4.
+
+### 18.2. Бэкофф на Telethon-вызовах (`telethon_client/client.py`)
+
+```python
+async def run_with_flood_backoff[T](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    attempts: int = RETRY_ATTEMPTS,
+    sleep: SleepFunction = asyncio.sleep,
+    max_flood_wait_seconds: int = MAX_FLOOD_WAIT_SECONDS,
+) -> T | None: ...
+```
+
+`RETRY_ATTEMPTS = 3`, `MAX_FLOOD_WAIT_SECONDS = 300`, `RETRY_BASE_DELAY_SECONDS = 2.0`.
+
+- `FloodWaitError` в пределах бюджета — пауза на `error.seconds` и повтор; дольше бюджета или исчерпаны попытки — `None` без сна.
+- `ServerError`/`TimedOutError` — линейно растущая пауза (`2s`, `4s`, ...), затем `None`.
+- Прочие `RPCError` не глотаются, а пробрасываются вызывающему, у которого своя обработка.
+
+Обёрнуты `TelethonChatResolver.resolve`, `TelethonGlobalSearch.search_chats`, `TelethonChatHistory.read_last_messages`. Каждая принимает `sleep: SleepFunction` для подмены в тестах — реального сна в тестах нет.
+
+### 18.3. Рейт-лимит DeepSeek (`llm/deepseek_client.py`)
+
+```python
+class AsyncRateLimiter:
+    def __init__(
+        self,
+        min_interval_seconds: float,
+        *,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None: ...
+
+    async def wait_for_slot(self) -> None: ...
+```
+
+Разносит запросы во времени под общей `asyncio.Lock`. `DeepSeekClient` принимает лимитер опционально и ждёт слот перед каждым запросом.
+
+### 18.4. Результаты операций управления чатами (`services/chat_service.py`)
+
+```python
+class AddChatOutcome(str, enum.Enum):
+    added, reactivated, already_monitored, unresolved
+
+class RemoveChatOutcome(str, enum.Enum):
+    removed, not_found
+
+class PromoteOutcome(str, enum.Enum):
+    promoted, not_found, unresolved
+```
+
+`AddChatResult`/`RemoveChatResult`/`PromoteResult` несут `outcome`, `handle`/`title` для сообщения владельцу. Правила:
+
+- `/add_chat` для уже существующей строки сохраняет её `origin` — чат из `sources.json` не превращается в `command` после ручного добавления.
+- `/remove_chat` только гасит `is_active`, строка и история `Lead` остаются (раздел 8.1).
+- `/discovered` показывает `approved`-кандидатов, которых ещё нет в `monitored_chats`; после переноса кандидат исчезает из списка сам, без правки его статуса.
+- Кнопка «Добавить в мониторинг» — callback `discovered:add:{id}`, защищена тем же `OwnerOnlyMiddleware`, что и команды.
+
+### 18.5. Расширенный `/status`
+
+```python
+class ChatServiceStatus(BaseModel):
+    telethon_healthy: bool
+    active_chats: int
+    discovery_interval_minutes: int
+    total_leads: int
+    notified_leads: int
+    pending_discovered: int
+    last_discovery_run_at: datetime | None
+```

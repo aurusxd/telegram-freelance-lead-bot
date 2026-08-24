@@ -1,6 +1,7 @@
 import json
 from collections.abc import Sequence
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +17,11 @@ def serialize_topics(topics: list[str]) -> str | None:
 def deserialize_topics(raw_topics: str | None) -> list[str]:
     if not raw_topics:
         return []
-    parsed = json.loads(raw_topics)
+    try:
+        parsed = json.loads(raw_topics)
+    except json.JSONDecodeError:
+        logger.warning("stored topics are not valid json, treating them as empty")
+        return []
     return [str(topic) for topic in parsed] if isinstance(parsed, list) else []
 
 

@@ -1,4 +1,7 @@
+import asyncio
 import json
+import time
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 import httpx
@@ -11,6 +14,30 @@ RESPONSE_TEMPERATURE = 0.2
 
 class LlmRequestError(Exception):
     pass
+
+
+class AsyncRateLimiter:
+    def __init__(
+        self,
+        min_interval_seconds: float,
+        *,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._min_interval_seconds = min_interval_seconds
+        self._sleep = sleep
+        self._clock = clock
+        self._lock = asyncio.Lock()
+        self._next_allowed_at = 0.0
+
+    async def wait_for_slot(self) -> None:
+        if self._min_interval_seconds <= 0:
+            return
+        async with self._lock:
+            delay = self._next_allowed_at - self._clock()
+            if delay > 0:
+                await self._sleep(delay)
+            self._next_allowed_at = self._clock() + self._min_interval_seconds
 
 
 class LlmClient(Protocol):
@@ -51,13 +78,17 @@ class DeepSeekClient:
         *,
         base_url: str = "https://api.deepseek.com",
         transport: httpx.AsyncBaseTransport | None = None,
+        rate_limiter: AsyncRateLimiter | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._base_url = base_url
         self._transport = transport
+        self._rate_limiter = rate_limiter
 
     async def complete_json(self, *, system_prompt: str, user_prompt: str) -> str:
+        if self._rate_limiter is not None:
+            await self._rate_limiter.wait_for_slot()
         async with httpx.AsyncClient(
             base_url=self._base_url,
             headers={

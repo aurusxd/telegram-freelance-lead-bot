@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
+    deepseek_min_interval_seconds: float = Field(default=1.0, ge=0.0)
 
     github_token: str = ""
     github_username: str = ""

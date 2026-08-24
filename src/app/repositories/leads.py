@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +46,15 @@ class LeadRepository:
             return
         lead.notified_at = notified_at
         await self._session.flush()
+
+    async def count_all(self) -> int:
+        result = await self._session.execute(select(func.count()).select_from(Lead))
+        return result.scalar_one()
+
+    async def count_notified(self) -> int:
+        statement = select(func.count()).select_from(Lead).where(Lead.notified_at.is_not(None))
+        result = await self._session.execute(statement)
+        return result.scalar_one()
 
     async def list_for_chat(self, monitored_chat_id: int) -> Sequence[Lead]:
         statement = (

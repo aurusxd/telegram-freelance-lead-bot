@@ -16,7 +16,12 @@ from app.discovery.pipeline import DiscoveryPipeline
 from app.discovery.providers.searxng_search import SearxngProvider
 from app.discovery.providers.telegram_search import TelethonGlobalSearchProvider
 from app.discovery.query_generator import QueryGenerator
-from app.llm.deepseek_client import DeepSeekClient, FakeDeepSeekClient, LlmClient
+from app.llm.deepseek_client import (
+    AsyncRateLimiter,
+    DeepSeekClient,
+    FakeDeepSeekClient,
+    LlmClient,
+)
 from app.llm.relevance import RelevanceChecker
 from app.logging import SECRET_FIELD_NAMES, describe_secret, setup_logging
 from app.portfolio.github_client import FakeGithubClient, GithubApiClient, GithubClient
@@ -180,6 +185,7 @@ def create_llm_client(settings: Settings) -> LlmClient:
             settings.deepseek_api_key,
             settings.deepseek_model,
             base_url=settings.deepseek_base_url,
+            rate_limiter=AsyncRateLimiter(settings.deepseek_min_interval_seconds),
         )
     logger.warning("deepseek api key is missing, relevance falls back to the fake client")
     return FakeDeepSeekClient()

@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,10 @@ class SearchQueryRepository:
             .values(last_run_at=ran_at)
         )
         await self._session.execute(statement)
+
+    async def last_run_at(self) -> datetime | None:
+        result = await self._session.execute(select(func.max(SearchQuery.last_run_at)))
+        return result.scalar_one_or_none()
 
     async def list_all(self) -> Sequence[SearchQuery]:
         statement = select(SearchQuery).order_by(SearchQuery.generated_at)

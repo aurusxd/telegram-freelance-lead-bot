@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Iterable
 from typing import Protocol
 
@@ -6,7 +7,7 @@ from telethon import TelegramClient, utils
 from telethon.errors import RPCError
 from telethon.tl.types import InputPeerChannel
 
-from app.telethon_client.client import ResolvedChat
+from app.telethon_client.client import ResolvedChat, SleepFunction, run_with_flood_backoff
 
 DEFAULT_HISTORY_LIMIT = 20
 
@@ -30,8 +31,9 @@ def extract_texts(messages: object) -> list[str]:
 
 
 class TelethonChatHistory:
-    def __init__(self, client: TelegramClient) -> None:
+    def __init__(self, client: TelegramClient, *, sleep: SleepFunction = asyncio.sleep) -> None:
         self._client = client
+        self._sleep = sleep
 
     async def read_last_messages(
         self, chat: ResolvedChat, limit: int = DEFAULT_HISTORY_LIMIT
@@ -41,7 +43,9 @@ class TelethonChatHistory:
             logger.warning("chat {} has no access hash, history skipped", chat.tg_chat_id)
             return []
         try:
-            messages = await self._client.get_messages(peer, limit=limit)
+            messages = await run_with_flood_backoff(
+                lambda: self._client.get_messages(peer, limit=limit), sleep=self._sleep
+            )
         except (RPCError, ValueError) as error:
             logger.warning("cannot read history of {}: {}", chat.tg_chat_id, type(error).__name__)
             return []

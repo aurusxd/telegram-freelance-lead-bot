@@ -1,6 +1,7 @@
 import enum
 import json
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
@@ -10,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.db.base import session_scope
 from app.db.models import DiscoveredChat, DiscoveryStatus, MonitoredChat, MonitoredChatOrigin
 from app.repositories.discovered_chats import DiscoveredChatRepository
+from app.repositories.leads import LeadRepository
 from app.repositories.monitored_chats import MonitoredChatRepository, normalize_username
+from app.repositories.search_queries import SearchQueryRepository
 from app.telethon_client.client import TelegramChatResolver
 
 
@@ -122,6 +125,10 @@ class ChatServiceStatus(BaseModel):
     telethon_healthy: bool
     active_chats: int
     discovery_interval_minutes: int
+    total_leads: int = 0
+    notified_leads: int = 0
+    pending_discovered: int = 0
+    last_discovery_run_at: datetime | None = None
 
 
 def normalize_handle(handle: str) -> str:
@@ -154,10 +161,18 @@ class ChatService:
     async def build_status(self) -> ChatServiceStatus:
         async with session_scope(self._session_factory) as session:
             active_chats = len(await MonitoredChatRepository(session).list_active())
+            lead_repository = LeadRepository(session)
+            total_leads = await lead_repository.count_all()
+            notified_leads = await lead_repository.count_notified()
+            last_discovery_run_at = await SearchQueryRepository(session).last_run_at()
         return ChatServiceStatus(
             telethon_healthy=await self._resolver.health_check(),
             active_chats=active_chats,
             discovery_interval_minutes=self._discovery_interval_minutes,
+            total_leads=total_leads,
+            notified_leads=notified_leads,
+            pending_discovered=len(await self.list_pending_discovered()),
+            last_discovery_run_at=last_discovery_run_at,
         )
 
     async def add_chat(self, handle: str) -> AddChatResult:

@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import datetime
 
 from aiogram import Router
 from aiogram.filters import Command, CommandObject, CommandStart
@@ -88,11 +89,23 @@ async def handle_list_chats(message: Message, chat_service: ChatService) -> None
 
 def format_status(status: ChatServiceStatus) -> str:
     telethon_state = "подключён" if status.telethon_healthy else "нет соединения"
-    return (
-        f"Telethon: {telethon_state}\n"
-        f"Активных мониторимых чатов: {status.active_chats}\n"
-        f"Интервал discovery: {status.discovery_interval_minutes} мин"
+    notified = f"(уведомлений отправлено: {status.notified_leads})"
+    return "\n".join(
+        [
+            f"Telethon: {telethon_state}",
+            f"Активных мониторимых чатов: {status.active_chats}",
+            f"Заявок найдено: {status.total_leads} {notified}",
+            f"Найденных чатов ждут решения: {status.pending_discovered}",
+            f"Интервал discovery: {status.discovery_interval_minutes} мин",
+            f"Последний прогон discovery: {format_last_run(status.last_discovery_run_at)}",
+        ]
     )
+
+
+def format_last_run(last_run_at: datetime | None) -> str:
+    if last_run_at is None:
+        return "ещё не запускался"
+    return last_run_at.strftime("%Y-%m-%d %H:%M UTC")
 
 
 def format_add_result(result: AddChatResult) -> str:
