@@ -72,6 +72,9 @@ class DiscoveredChatRepository:
             return None
         return result.scalar_one_or_none()
 
+    async def get(self, discovered_chat_id: int) -> DiscoveredChat | None:
+        return await self._session.get(DiscoveredChat, discovered_chat_id)
+
     async def list_by_status(self, status: DiscoveryStatus) -> Sequence[DiscoveredChat]:
         statement = (
             select(DiscoveredChat)

@@ -1,4 +1,6 @@
+import enum
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 from loguru import logger
@@ -6,8 +8,9 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.base import session_scope
-from app.db.models import MonitoredChatOrigin
-from app.repositories.monitored_chats import MonitoredChatRepository
+from app.db.models import DiscoveredChat, DiscoveryStatus, MonitoredChat, MonitoredChatOrigin
+from app.repositories.discovered_chats import DiscoveredChatRepository
+from app.repositories.monitored_chats import MonitoredChatRepository, normalize_username
 from app.telethon_client.client import TelegramChatResolver
 
 
@@ -80,10 +83,61 @@ class SourcesSyncResult(BaseModel):
     unresolved: list[str] = Field(default_factory=list)
 
 
+class AddChatOutcome(str, enum.Enum):
+    added = "added"
+    reactivated = "reactivated"
+    already_monitored = "already_monitored"
+    unresolved = "unresolved"
+
+
+class AddChatResult(BaseModel):
+    outcome: AddChatOutcome
+    handle: str
+    title: str | None = None
+
+
+class RemoveChatOutcome(str, enum.Enum):
+    removed = "removed"
+    not_found = "not_found"
+
+
+class RemoveChatResult(BaseModel):
+    outcome: RemoveChatOutcome
+    handle: str
+    title: str | None = None
+
+
+class PromoteOutcome(str, enum.Enum):
+    promoted = "promoted"
+    not_found = "not_found"
+    unresolved = "unresolved"
+
+
+class PromoteResult(BaseModel):
+    outcome: PromoteOutcome
+    title: str | None = None
+
+
 class ChatServiceStatus(BaseModel):
     telethon_healthy: bool
     active_chats: int
     discovery_interval_minutes: int
+
+
+def normalize_handle(handle: str) -> str:
+    return f"@{normalize_username(handle)}"
+
+
+def discovered_key(chat: DiscoveredChat) -> str:
+    if chat.username:
+        return chat.username.lower()
+    return str(chat.tg_chat_id)
+
+
+def classify_add_outcome(existing: MonitoredChat | None) -> AddChatOutcome:
+    if existing is None:
+        return AddChatOutcome.added
+    return AddChatOutcome.already_monitored if existing.is_active else AddChatOutcome.reactivated
 
 
 class ChatService:
@@ -105,6 +159,90 @@ class ChatService:
             active_chats=active_chats,
             discovery_interval_minutes=self._discovery_interval_minutes,
         )
+
+    async def add_chat(self, handle: str) -> AddChatResult:
+        normalized_handle = normalize_handle(handle)
+        resolved = await self._resolver.resolve(normalized_handle)
+        if resolved is None:
+            return AddChatResult(outcome=AddChatOutcome.unresolved, handle=normalized_handle)
+        async with session_scope(self._session_factory) as session:
+            repository = MonitoredChatRepository(session)
+            existing = await repository.get_by_tg_chat_id(resolved.tg_chat_id)
+            outcome = classify_add_outcome(existing)
+            await repository.upsert(
+                tg_chat_id=resolved.tg_chat_id,
+                title=resolved.title,
+                username=resolved.username or normalized_handle,
+                origin=existing.origin if existing else MonitoredChatOrigin.command,
+            )
+        return AddChatResult(
+            outcome=outcome,
+            handle=normalized_handle,
+            title=resolved.title,
+        )
+
+    async def remove_chat(self, handle: str) -> RemoveChatResult:
+        normalized_handle = normalize_handle(handle)
+        async with session_scope(self._session_factory) as session:
+            repository = MonitoredChatRepository(session)
+            chat = await repository.get_by_username(normalized_handle)
+            if chat is None or not chat.is_active:
+                return RemoveChatResult(
+                    outcome=RemoveChatOutcome.not_found,
+                    handle=normalized_handle,
+                    title=chat.title if chat else None,
+                )
+            await repository.deactivate_by_username(normalized_handle)
+            return RemoveChatResult(
+                outcome=RemoveChatOutcome.removed,
+                handle=normalized_handle,
+                title=chat.title,
+            )
+
+    async def list_chats(self) -> Sequence[MonitoredChat]:
+        async with session_scope(self._session_factory) as session:
+            return await MonitoredChatRepository(session).list_all()
+
+    async def list_pending_discovered(self) -> list[DiscoveredChat]:
+        async with session_scope(self._session_factory) as session:
+            approved = await DiscoveredChatRepository(session).list_by_status(
+                DiscoveryStatus.approved
+            )
+            monitored_keys = await MonitoredChatRepository(session).existing_keys()
+        return [chat for chat in approved if discovered_key(chat) not in monitored_keys]
+
+    async def promote_discovered(self, discovered_chat_id: int) -> PromoteResult:
+        async with session_scope(self._session_factory) as session:
+            discovered = await DiscoveredChatRepository(session).get(discovered_chat_id)
+            if discovered is None or discovered.status is not DiscoveryStatus.approved:
+                return PromoteResult(outcome=PromoteOutcome.not_found)
+            identity = await self._resolve_discovered_identity(discovered)
+            if identity is None:
+                return PromoteResult(outcome=PromoteOutcome.unresolved, title=discovered.title)
+            tg_chat_id, title, username = identity
+            await MonitoredChatRepository(session).upsert(
+                tg_chat_id=tg_chat_id,
+                title=title,
+                username=username,
+                origin=MonitoredChatOrigin.command,
+            )
+        return PromoteResult(outcome=PromoteOutcome.promoted, title=title)
+
+    async def _resolve_discovered_identity(
+        self, discovered: DiscoveredChat
+    ) -> tuple[int, str, str | None] | None:
+        if discovered.tg_chat_id is not None:
+            return (
+                discovered.tg_chat_id,
+                discovered.title or discovered.link,
+                discovered.username,
+            )
+        if discovered.username is None:
+            return None
+        resolved = await self._resolver.resolve(normalize_handle(discovered.username))
+        if resolved is None:
+            return None
+        return resolved.tg_chat_id, resolved.title, resolved.username or discovered.username
 
     async def sync_from_sources_file(self, path: Path) -> SourcesSyncResult:
         entries = load_sources_file(path)

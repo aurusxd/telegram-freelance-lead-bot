@@ -561,6 +561,7 @@ class GithubClient(Protocol):
 class GlobalChatSearch(Protocol):
     async def search_chats(self, query: str, limit: int) -> list[ResolvedChat]: ...
 
+
 class RawRequestInvoker(Protocol):
     async def __call__(self, request: Any) -> Any: ...
 ```

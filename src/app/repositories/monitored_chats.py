@@ -8,7 +8,7 @@ from app.db.models import MonitoredChat, MonitoredChatOrigin
 
 
 def normalize_username(username: str) -> str:
-    return username.removeprefix("@").strip().lower()
+    return username.strip().removeprefix("@").strip().lower()
 
 
 class MonitoredChatRepository:
@@ -69,6 +69,11 @@ class MonitoredChatRepository:
         statement = select(MonitoredChat).where(MonitoredChat.tg_chat_id == tg_chat_id)
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
+
+    async def list_all(self) -> Sequence[MonitoredChat]:
+        statement = select(MonitoredChat).order_by(MonitoredChat.added_at)
+        result = await self._session.execute(statement)
+        return result.scalars().all()
 
     async def existing_keys(self) -> set[str]:
         statement = select(MonitoredChat.username, MonitoredChat.tg_chat_id)

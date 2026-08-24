@@ -6,7 +6,7 @@ from aiogram.exceptions import TelegramAPIError
 from loguru import logger
 from telethon import TelegramClient
 
-from app.bot.handlers import commands, monitoring
+from app.bot.handlers import commands, discovered, monitoring
 from app.bot.keyboards import build_contact_keyboard
 from app.bot.middlewares.owner_only import OwnerOnlyMiddleware
 from app.config import Settings, get_settings
@@ -90,8 +90,12 @@ def build_dispatcher(
     lead_service: LeadService,
 ) -> Dispatcher:
     dispatcher = Dispatcher(chat_service=chat_service, lead_service=lead_service)
-    commands.router.message.middleware(OwnerOnlyMiddleware(settings.owner_tg_id))
+    owner_only = OwnerOnlyMiddleware(settings.owner_tg_id)
+    commands.router.message.middleware(owner_only)
+    discovered.router.message.middleware(owner_only)
+    discovered.router.callback_query.middleware(owner_only)
     dispatcher.include_router(commands.router)
+    dispatcher.include_router(discovered.router)
     dispatcher.include_router(monitoring.router)
     return dispatcher
 
