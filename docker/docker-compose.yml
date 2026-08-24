@@ -1,0 +1,28 @@
+services:
+  bot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////app/data/bot.db
+      TELETHON_SESSION_PATH: /app/data/telethon.session
+      SOURCES_FILE_PATH: /app/sources.json
+      SEARXNG_BASE_URL: http://searxng:8080
+    volumes:
+      - bot-data:/app/data
+    depends_on:
+      - searxng
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:latest
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+    restart: unless-stopped
+
+volumes:
+  bot-data:

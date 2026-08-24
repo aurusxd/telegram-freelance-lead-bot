@@ -1,0 +1,19 @@
+use_default_settings: true
+
+server:
+  # секрет генерируется владельцем при развёртывании, в репозитории не хранится
+  secret_key: "change-me-on-deploy"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+
+engines:
+  - name: google
+    disabled: false
+  - name: duckduckgo
+    disabled: false
