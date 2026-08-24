@@ -1,0 +1,12 @@
+[
+  {
+    "handle": "@freelansim_ru",
+    "title": "Хабр Фриланс",
+    "enabled": true
+  },
+  {
+    "handle": "@freelancetaverna",
+    "title": "Фриланс Таверна",
+    "enabled": true,
+  }
+]
