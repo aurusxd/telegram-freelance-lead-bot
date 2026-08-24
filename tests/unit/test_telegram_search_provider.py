@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 from telethon.errors import RPCError
-from telethon.tl.types import Channel, Chat, User
+from telethon.tl.types import Channel, Chat, ChatPhotoEmpty, User
 
 from app.db.models import DiscoveryProvider
 from app.discovery.providers.telegram_search import (
@@ -28,7 +28,7 @@ def make_channel(
     return Channel(
         id=channel_id,
         title=title,
-        photo=None,
+        photo=ChatPhotoEmpty(),
         date=None,
         access_hash=999,
         username=username,
@@ -74,7 +74,14 @@ def test_public_megagroup_and_broadcast_pass_the_filter() -> None:
     [
         make_channel(username=None),
         make_channel(megagroup=False, broadcast=False),
-        Chat(id=1, title="Приватная группа", photo=None, participants_count=3, date=None, version=1),
+        Chat(
+            id=1,
+            title="Приватная группа",
+            photo=ChatPhotoEmpty(),
+            participants_count=3,
+            date=None,
+            version=1,
+        ),
         User(id=1, first_name="Человек"),
         "мусор",
     ],

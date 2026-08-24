@@ -1,7 +1,6 @@
-from typing import Protocol
+from typing import Any, Protocol
 
 from loguru import logger
-from telethon import TelegramClient
 from telethon.errors import RPCError
 from telethon.tl.functions.messages import SearchGlobalRequest
 from telethon.tl.types import Channel, InputMessagesFilterEmpty, InputPeerEmpty
@@ -15,6 +14,10 @@ class GlobalChatSearch(Protocol):
     async def search_chats(self, query: str, limit: int) -> list[ResolvedChat]: ...
 
 
+class RawRequestInvoker(Protocol):
+    async def __call__(self, request: Any) -> Any: ...
+
+
 def is_public_source_chat(chat: object) -> bool:
     if not isinstance(chat, Channel):
         return False
@@ -24,7 +27,7 @@ def is_public_source_chat(chat: object) -> bool:
 
 
 class TelethonGlobalSearch:
-    def __init__(self, client: TelegramClient) -> None:
+    def __init__(self, client: RawRequestInvoker) -> None:
         self._client = client
 
     async def search_chats(
