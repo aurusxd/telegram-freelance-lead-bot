@@ -501,6 +501,7 @@ class ResolvedChat:
     title: str
     username: str | None
 
+
 class TelegramChatResolver(Protocol):
     async def resolve(self, handle: str) -> ResolvedChat | None: ...
     async def health_check(self) -> bool: ...
@@ -527,6 +528,7 @@ class GithubRepo:
     topics: list[str]
     language: str | None
     html_url: str
+
 
 class GithubClient(Protocol):
     async def list_repos(self) -> list[GithubRepo]: ...
