@@ -14,7 +14,7 @@ from app.db.base import create_engine, create_session_factory
 from app.db.models import Lead
 from app.discovery.pipeline import DiscoveryPipeline
 from app.discovery.providers.searxng_search import FakeSearxngProvider
-from app.llm.deepseek_client import FakeDeepSeekClient
+from app.llm.deepseek_client import DeepSeekClient, FakeDeepSeekClient, LlmClient
 from app.llm.relevance import RelevanceChecker
 from app.logging import SECRET_FIELD_NAMES, describe_secret, setup_logging
 from app.portfolio.github_client import FakeGithubClient, GithubApiClient, GithubClient
@@ -123,7 +123,7 @@ async def run() -> None:
     bot = Bot(token=settings.bot_token)
     lead_service = LeadService(
         session_factory,
-        RelevanceChecker(FakeDeepSeekClient()),
+        RelevanceChecker(create_llm_client(settings)),
         portfolio,
         TelegramOwnerNotifier(bot, settings.owner_tg_id),
     )
@@ -149,6 +149,17 @@ def portfolio_sync_job(portfolio: PortfolioService) -> Callable[[], Awaitable[No
         await portfolio.sync()
 
     return job
+
+
+def create_llm_client(settings: Settings) -> LlmClient:
+    if settings.deepseek_api_key:
+        return DeepSeekClient(
+            settings.deepseek_api_key,
+            settings.deepseek_model,
+            base_url=settings.deepseek_base_url,
+        )
+    logger.warning("deepseek api key is missing, relevance falls back to the fake client")
+    return FakeDeepSeekClient()
 
 
 def create_github_client(settings: Settings) -> GithubClient:

@@ -3,8 +3,9 @@ import json
 from loguru import logger
 from pydantic import BaseModel, ValidationError, field_validator
 
-from app.llm.deepseek_client import LlmClient
+from app.llm.deepseek_client import LlmClient, LlmRequestError
 
+MAX_LLM_ATTEMPTS = 2
 MAX_REASON_LENGTH = 200
 MAX_MESSAGE_CONTEXT_CHARS = 4000
 
@@ -66,24 +67,22 @@ def build_chat_prompt(chat_context: str, portfolio_summary: str) -> str:
     )
 
 
-def parse_verdict(raw_response: str) -> RelevanceVerdict:
+def try_parse_verdict(raw_response: str) -> RelevanceVerdict | None:
     try:
         return RelevanceVerdict.model_validate_json(raw_response)
     except ValidationError:
-        return parse_verdict_from_embedded_json(raw_response)
+        return try_parse_embedded_verdict(raw_response)
 
 
-def parse_verdict_from_embedded_json(raw_response: str) -> RelevanceVerdict:
+def try_parse_embedded_verdict(raw_response: str) -> RelevanceVerdict | None:
     start = raw_response.find("{")
     end = raw_response.rfind("}")
     if start == -1 or end <= start:
-        logger.warning("llm response has no json object, treating message as irrelevant")
-        return IRRELEVANT_ON_PARSE_FAILURE
+        return None
     try:
         return RelevanceVerdict.model_validate(json.loads(raw_response[start : end + 1]))
     except (json.JSONDecodeError, ValidationError):
-        logger.warning("llm response is not a valid verdict, treating message as irrelevant")
-        return IRRELEVANT_ON_PARSE_FAILURE
+        return None
 
 
 class RelevanceChecker:
@@ -91,15 +90,33 @@ class RelevanceChecker:
         self._client = client
 
     async def evaluate_message(self, message_text: str, portfolio_summary: str) -> RelevanceVerdict:
-        raw_response = await self._client.complete_json(
-            system_prompt=MESSAGE_SYSTEM_PROMPT,
-            user_prompt=build_message_prompt(message_text, portfolio_summary),
+        return await self._evaluate(
+            MESSAGE_SYSTEM_PROMPT,
+            build_message_prompt(message_text, portfolio_summary),
         )
-        return parse_verdict(raw_response)
 
     async def evaluate_chat(self, chat_context: str, portfolio_summary: str) -> RelevanceVerdict:
-        raw_response = await self._client.complete_json(
-            system_prompt=CHAT_SYSTEM_PROMPT,
-            user_prompt=build_chat_prompt(chat_context, portfolio_summary),
+        return await self._evaluate(
+            CHAT_SYSTEM_PROMPT,
+            build_chat_prompt(chat_context, portfolio_summary),
         )
-        return parse_verdict(raw_response)
+
+    async def _evaluate(self, system_prompt: str, user_prompt: str) -> RelevanceVerdict:
+        for attempt in range(1, MAX_LLM_ATTEMPTS + 1):
+            verdict = await self._try_single_attempt(system_prompt, user_prompt)
+            if verdict is not None:
+                return verdict
+            logger.warning("llm attempt {} of {} produced no verdict", attempt, MAX_LLM_ATTEMPTS)
+        return IRRELEVANT_ON_PARSE_FAILURE
+
+    async def _try_single_attempt(
+        self, system_prompt: str, user_prompt: str
+    ) -> RelevanceVerdict | None:
+        try:
+            raw_response = await self._client.complete_json(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+        except LlmRequestError:
+            return None
+        return try_parse_verdict(raw_response)

@@ -120,7 +120,7 @@ async def test_message_from_deactivated_chat_is_ignored(
     assert await stored_leads(session_factory, chat_id) == []
 
 
-async def test_broken_llm_json_degrades_without_creating_lead(
+async def test_broken_llm_json_retries_once_then_degrades(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     chat_id = await seed_monitored_chat(session_factory)
@@ -132,7 +132,7 @@ async def test_broken_llm_json_degrades_without_creating_lead(
     )
 
     assert lead is None
-    assert llm.calls == 1
+    assert llm.calls == 2
     assert await stored_leads(session_factory, chat_id) == []
     assert notifier.sent == []
 
