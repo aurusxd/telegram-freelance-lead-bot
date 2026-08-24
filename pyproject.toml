@@ -7,6 +7,7 @@ dependencies = [
     "aiogram>=3.15",
     "aiosqlite>=0.20",
     "alembic>=1.14",
+    "apscheduler>=3.11.3",
     "httpx>=0.28",
     "loguru>=0.7",
     "pydantic>=2.10",

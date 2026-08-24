@@ -1,7 +1,8 @@
 # tech.md — ядро проекта
 
-version: v4 (2026-08-24)
+version: v5 (2026-08-24)
 changelog:
+- v5 — контракты резолва чата, LLM-клиента и GitHub-клиента (раздел 15), планировщик на APScheduler с интервалом discovery 10 минут (раздел 16).
 - v4 — дефолтный источник мониторимых чатов `sources.json` (раздел 8.1), поле `origin` в `MonitoredChat` (раздел 5), эталонная вертикаль скелета переопределена (раздел 14).
 - v3 — обязательный набор тестов на фейковых сообщениях для модуля релевантности (раздел 12.1).
 - v2 — правило «без комментариев в коде» (раздел 13), убран пункт про комментарии из конвенции коммитов.
@@ -483,3 +484,64 @@ CONTRACT GAP
 6. **Discovery: конвейер** — `query_generator.py` (LLM-генерация запросов на портфолио), `pipeline.py` целиком: сбор от обоих провайдеров, дедуп, проверка БД, обогащение через Telethon, AI-фильтр, персист (раздел 6.3), периодический запуск в `scheduler.py`.
 7. **Управление чатами** — `/add_chat` (точечное добавление чата без правки `sources.json`+перезапуска, `origin=command`), `/list_chats`, `/remove_chat`, `/discovered` (просмотр `approved`-кандидатов, кнопка «Добавить в мониторинг» → перенос в `monitored_chats`).
 8. **Устойчивость** — обработка `FloodWaitError`/бэкофф на Telethon-вызовах, рейт-лимит на DeepSeek-запросы, `/status`, закрытие пробелов в тестовом покрытии.
+
+---
+
+## 15. Контракты внешних клиентов (append v5)
+
+Дополняет разделы 6, 7, 9. Формы зафиксированы, реализации подменяются фейками в тестах (раздел 13).
+
+### 15.1. Резолв чата через Telethon
+
+```python
+@dataclass(frozen=True)
+class ResolvedChat:
+    tg_chat_id: int
+    access_hash: int | None
+    title: str
+    username: str | None
+
+class TelegramChatResolver(Protocol):
+    async def resolve(self, handle: str) -> ResolvedChat | None: ...
+    async def health_check(self) -> bool: ...
+```
+
+Место — `telethon_client/client.py`. `resolve` возвращает `None`, если чат не найден или недоступен (приватный, удалённый, забаненный аккаунт) — это не исключение, а штатная ветка: синк `sources.json` логирует пропуск и продолжает остальные записи, discovery отбрасывает кандидата. Сетевые сбои и `FloodWaitError` наверх пробрасываются исключением, их обрабатывает слайс 8 стадии 2. `health_check` — команда проверки соединения из чек-листа скелета.
+
+### 15.2. LLM-клиент
+
+```python
+class LlmClient(Protocol):
+    async def complete_json(self, *, system_prompt: str, user_prompt: str) -> str: ...
+```
+
+Место — `llm/deepseek_client.py`. Возвращает сырую строку ответа модели; разбор в `RelevanceVerdict`/`GeneratedQueries` (раздел 7) и ретрай на невалидный JSON — на стороне `llm/relevance.py` и `llm/queries.py`. Фейк стадии 1 реализует тот же протокол и отдаёт детерминированный JSON.
+
+### 15.3. GitHub-клиент
+
+```python
+@dataclass(frozen=True)
+class GithubRepo:
+    name: str
+    description: str | None
+    topics: list[str]
+    language: str | None
+    html_url: str
+
+class GithubClient(Protocol):
+    async def list_repos(self) -> list[GithubRepo]: ...
+```
+
+Место — `portfolio/github_client.py`. Поля мапятся один в один в `PortfolioItem` (раздел 5), `topics` сериализуется в JSON-строку при записи в БД.
+
+---
+
+## 16. Планировщик (append v5)
+
+`scheduler.py` — `APScheduler` (`AsyncIOScheduler`), запускается вместе с ботом в `bot/main.py`, живёт в том же event loop, останавливается при завершении polling.
+
+Задачи:
+- **discovery run** — интервал `DISCOVERY_INTERVAL_MINUTES`, значение по умолчанию `10` (заменяет `180` из раздела 4); `coalesce=True`, `max_instances=1`, чтобы прогоны не наслаивались;
+- **portfolio sync** — раз в сутки (раздел 9).
+
+`apscheduler` добавляется в стек раздела 2 как зависимость. `.env.example` обновляется до `DISCOVERY_INTERVAL_MINUTES=10` в том же коммите.

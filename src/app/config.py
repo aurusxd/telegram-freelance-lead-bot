@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/bot.db"
 
     log_level: str = "INFO"
-    discovery_interval_minutes: int = Field(default=180, ge=1)
+    discovery_interval_minutes: int = Field(default=10, ge=1)
     discovery_messages_per_chat: int = Field(default=20, ge=1)
     discovery_queries_per_run: int = Field(default=5, ge=1)
 
