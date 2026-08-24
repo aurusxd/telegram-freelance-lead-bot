@@ -1,12 +1,16 @@
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from aiogram.types import Chat, Message, User
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.base import Base, create_engine, create_session_factory
+from app.db.models import Lead
 from app.telethon_client.client import ResolvedChat
+from tests.unit.fixtures.relevance_messages import RelevanceCase
 
 
 @pytest.fixture
@@ -54,3 +58,74 @@ def write_sources_file(path: Path, entries: object) -> Path:
     sources_path = path / "sources.json"
     sources_path.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
     return sources_path
+
+
+class FakeOwnerNotifier:
+    def __init__(self, *, delivered: bool = True) -> None:
+        self.sent: list[tuple[int, str]] = []
+        self._delivered = delivered
+
+    async def notify_lead(self, lead: Lead, chat_title: str) -> bool:
+        self.sent.append((lead.id, chat_title))
+        return self._delivered
+
+
+class FakeVerdictLlm:
+    def __init__(self, cases: Sequence[RelevanceCase]) -> None:
+        self._cases = cases
+        self.prompts: list[str] = []
+
+    async def complete_json(self, *, system_prompt: str, user_prompt: str) -> str:
+        del system_prompt
+        self.prompts.append(user_prompt)
+        case = self._match_case(user_prompt)
+        return json.dumps(
+            {
+                "is_relevant": case.expected_relevant,
+                "reason": f"кейс: {case.description}",
+                "confidence": 0.9 if case.expected_relevant else 0.1,
+            },
+            ensure_ascii=False,
+        )
+
+    def _match_case(self, user_prompt: str) -> RelevanceCase:
+        for case in self._cases:
+            probe = case.text.strip()[:60]
+            if probe and probe in user_prompt:
+                return case
+        raise AssertionError("llm called with a prompt that matches no fixture case")
+
+
+class BrokenJsonLlm:
+    def __init__(self, response: str = "модель прислала не json") -> None:
+        self._response = response
+        self.calls = 0
+
+    async def complete_json(self, *, system_prompt: str, user_prompt: str) -> str:
+        del system_prompt, user_prompt
+        self.calls += 1
+        return self._response
+
+
+class StubPortfolioSummary:
+    def build_summary(self) -> str:
+        return "Портфолио: python, telegram-боты, парсеры"
+
+
+def make_group_message(
+    text: str,
+    *,
+    chat_id: int = -1001,
+    message_id: int = 1,
+    user_id: int = 555,
+    username: str | None = "customer",
+    first_name: str = "Заказчик",
+    chat_type: str = "supergroup",
+) -> Message:
+    return Message(
+        message_id=message_id,
+        date=datetime.now(UTC),
+        chat=Chat(id=chat_id, type=chat_type, title="Мониторимый чат"),
+        from_user=User(id=user_id, is_bot=False, first_name=first_name, username=username),
+        text=text or None,
+    )
