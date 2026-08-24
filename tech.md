@@ -1,7 +1,8 @@
 # tech.md — ядро проекта
 
-version: v5 (2026-08-24)
+version: v6 (2026-08-24)
 changelog:
+- v6 — интерфейсы discovery-конвейера и мониторинга (раздел 17): GlobalChatSearch, ChatHistoryReader, PortfolioSummarySource, OwnerNotifier, семантика LlmRequestError и ретрая, DiscoveryRunResult.
 - v5 — контракты резолва чата, LLM-клиента и GitHub-клиента (раздел 15), планировщик на APScheduler с интервалом discovery 10 минут (раздел 16).
 - v4 — дефолтный источник мониторимых чатов `sources.json` (раздел 8.1), поле `origin` в `MonitoredChat` (раздел 5), эталонная вертикаль скелета переопределена (раздел 14).
 - v3 — обязательный набор тестов на фейковых сообщениях для модуля релевантности (раздел 12.1).
@@ -547,3 +548,65 @@ class GithubClient(Protocol):
 - **portfolio sync** — раз в сутки (раздел 9).
 
 `apscheduler` добавляется в стек раздела 2 как зависимость. `.env.example` обновляется до `DISCOVERY_INTERVAL_MINUTES=10` в том же коммите.
+
+---
+
+## 17. Интерфейсы слайсов стадии 2 (append v6)
+
+Дополняет разделы 6, 7, 8, 9. Все формы выведены из уже зафиксированных контрактов, ни один новый DTO не пересекает слои сверх перечисленного.
+
+### 17.1. Поиск чатов через Telethon (`telethon_client/search.py`)
+
+```python
+class GlobalChatSearch(Protocol):
+    async def search_chats(self, query: str, limit: int) -> list[ResolvedChat]: ...
+
+class RawRequestInvoker(Protocol):
+    async def __call__(self, request: Any) -> Any: ...
+```
+
+`TelethonGlobalSearch` принимает `RawRequestInvoker` (им является `TelegramClient`), вызывает `SearchGlobalRequest`, фильтрует `response.chats` до публичных `Channel` (`megagroup` или `broadcast`, обязательный `username`) и отдаёт `ResolvedChat` из раздела 15.1. `RPCError` не пробрасывается: прогон продолжается с пустым результатом, бэкофф — слайс 8.
+
+### 17.2. Чтение истории (`telethon_client/history.py`)
+
+```python
+class ChatHistoryReader(Protocol):
+    async def read_last_messages(self, chat: ResolvedChat, limit: int) -> list[str]: ...
+```
+
+Читает последние сообщения публичного чата без вступления, по `InputPeerChannel` из `tg_chat_id` + `access_hash`. Чат без `access_hash` и любая `RPCError` дают пустой список.
+
+### 17.3. Сводка портфолио (`portfolio/service.py`)
+
+```python
+class PortfolioSummarySource(Protocol):
+    def build_summary(self) -> str: ...
+```
+
+Синхронный метод по разделу 9: значение берётся из кэша процесса, кэш заполняется в `sync()`. Потребители — `services/lead_service.py` и `discovery/pipeline.py`.
+
+### 17.4. Уведомление владельца (`services/lead_service.py`)
+
+```python
+class OwnerNotifier(Protocol):
+    async def notify_lead(self, lead: Lead, chat_title: str) -> bool: ...
+```
+
+Возвращает признак доставки: `True` — сервис проставляет `notified_at`, `False` — лид остаётся неуведомлённым и `notified_at` пуст. Реализация на aiogram живёт в композиционном корне `bot/main.py`, текст уведомления и кнопка «Написать» — слой бота, не сервис.
+
+### 17.5. Ошибки и ретрай LLM
+
+`llm/deepseek_client.py` поднимает `LlmRequestError` на сбое транспорта, не-2xx и на ответе неожиданной формы. `MAX_LLM_ATTEMPTS = 2` в `llm/relevance.py` задаёт один ретрай, покрывающий обе ветки — невалидный JSON и `LlmRequestError`. После двух неудач: `relevance` отдаёт вердикт «нерелевантно», `query_generator` — пустой список запросов, прогон discovery пропускается.
+
+### 17.6. Результат прогона discovery (`discovery/pipeline.py`)
+
+```python
+class DiscoveryRunResult(BaseModel):
+    queries: int
+    candidates: int
+    approved: int
+    rejected: int
+    unresolved: int
+```
+
+Уточнение к разделу 6.3: кандидат с пустой историей сообщений сохраняется со статусом `rejected` и причиной «история чата пуста, оценка не проводилась», в LLM не отправляется. Нерезолвящийся кандидат не сохраняется и считается в `unresolved`.
