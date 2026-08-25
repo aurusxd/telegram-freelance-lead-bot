@@ -82,11 +82,24 @@ async def disconnect_telethon(client: TelegramClient) -> None:
         await pending
 
 
-async def connect_telethon(client: TelegramClient) -> None:
+UNAUTHORIZED_TELETHON_HINT = (
+    "telethon session is not authorized: run "
+    "`docker compose run --rm --entrypoint uv bot run python -m app.telethon_login` "
+    "once, then restart the bot; chat sync and discovery stay disabled until then"
+)
+
+
+async def start_telethon(client: TelegramClient) -> bool:
     try:
         await client.connect()
     except OSError as error:
-        logger.warning("telethon connection failed: {}", type(error).__name__)
+        logger.error("telethon connection failed: {}", type(error).__name__)
+        return False
+    if not await client.is_user_authorized():
+        logger.error(UNAUTHORIZED_TELETHON_HINT)
+        return False
+    logger.info("telethon session is authorized")
+    return True
 
 
 def build_dispatcher(
@@ -118,11 +131,14 @@ async def run() -> None:
         settings.telegram_api_hash,
         settings.telethon_session_path,
     )
-    await connect_telethon(telethon_client)
+    telethon_ready = await start_telethon(telethon_client)
     resolver = TelethonChatResolver(telethon_client)
 
     chat_service = ChatService(session_factory, resolver, settings.discovery_interval_minutes)
-    await chat_service.sync_from_sources_file(settings.sources_file_path)
+    if telethon_ready:
+        await chat_service.sync_from_sources_file(settings.sources_file_path)
+    else:
+        logger.warning("sources sync skipped until the telethon session is authorized")
 
     portfolio = PortfolioService(session_factory, create_github_client(settings))
     await portfolio.sync()
@@ -144,7 +160,12 @@ async def run() -> None:
         messages_per_chat=settings.discovery_messages_per_chat,
     )
     scheduler = create_scheduler()
-    register_discovery_job(scheduler, discovery_job(pipeline), settings.discovery_interval_minutes)
+    if telethon_ready:
+        register_discovery_job(
+            scheduler, discovery_job(pipeline), settings.discovery_interval_minutes
+        )
+    else:
+        logger.warning("discovery job not scheduled until the telethon session is authorized")
     register_portfolio_sync_job(scheduler, portfolio_sync_job(portfolio))
     scheduler.start()
 

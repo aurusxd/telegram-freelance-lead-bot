@@ -4,10 +4,16 @@ from typing import Any, cast
 import pytest
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from telethon import TelegramClient
 
 from app.bot.handlers.commands import format_last_run, format_status, handle_status
 from app.bot.handlers.monitoring import handle_monitored_message
-from app.bot.main import build_dispatcher, create_github_client, create_llm_client
+from app.bot.main import (
+    build_dispatcher,
+    create_github_client,
+    create_llm_client,
+    start_telethon,
+)
 from app.bot.middlewares.owner_only import OwnerOnlyMiddleware
 from app.config import Settings
 from app.db.base import session_scope, utcnow
@@ -205,3 +211,35 @@ async def test_resolver_stub_records_requested_handles() -> None:
     assert await resolver.resolve("@chat") is not None
     assert await resolver.resolve("@missing") is None
     assert resolver.calls == ["@chat", "@missing"]
+
+
+class TelethonClientStub:
+    def __init__(self, *, connect_error: Exception | None = None, authorized: bool = True) -> None:
+        self._connect_error = connect_error
+        self._authorized = authorized
+        self.connected = False
+
+    async def connect(self) -> None:
+        if self._connect_error is not None:
+            raise self._connect_error
+        self.connected = True
+
+    async def is_user_authorized(self) -> bool:
+        return self._authorized
+
+
+async def test_startup_reports_authorized_session() -> None:
+    client = TelethonClientStub()
+
+    assert await start_telethon(cast(TelegramClient, client)) is True
+    assert client.connected is True
+
+
+async def test_startup_refuses_unauthorized_session() -> None:
+    assert await start_telethon(cast(TelegramClient, TelethonClientStub(authorized=False))) is False
+
+
+async def test_startup_survives_connection_failure() -> None:
+    client = TelethonClientStub(connect_error=OSError("нет сети"))
+
+    assert await start_telethon(cast(TelegramClient, client)) is False
